@@ -105,6 +105,7 @@ select,input[type=text]{padding:9px 11px;border:1.5px solid var(--line);border-r
   <span class="ttl">🐱 にゃんこ漢字ストーリー</span>
   <span class="sp"></span>
   <button class="iconbtn" id="furiBtn">ふりがな：ON</button>
+  <button class="iconbtn" id="soundBtn">🔊 音：ON</button>
   <button class="iconbtn" id="homeBtn">🏠 ホーム</button>
 </header>
 <main>
@@ -124,6 +125,11 @@ select,input[type=text]{padding:9px 11px;border:1.5px solid var(--line);border-r
     <div class="card">
       <h2 class="sec">🎯 今日のミッション</h2>
       <div class="missions" id="missionList"></div>
+    </div>
+    <div class="card" id="weakCard" style="display:none">
+      <h2 class="sec">😿 覚え直しリスト</h2>
+      <div class="small">まちがえた 漢字は ここに たまります。タップして「読みクイズ」と「書き練習」の 両方を クリアすると 克服できます。</div>
+      <div class="kanjiGrid" id="weakGrid" style="margin-top:10px"></div>
     </div>
     <h2 class="sec">📚 テーマを 選ぼう</h2>
     <div class="themeGrid" id="themeGrid"></div>
@@ -218,6 +224,22 @@ select,input[type=text]{padding:9px 11px;border:1.5px solid var(--line);border-r
     </div>
   </section>
 
+  <!-- とことん復習 -->
+  <section class="view" id="view-review">
+    <button class="btn" data-nav="home">← ホームへ もどる</button>
+    <div class="card" style="margin-top:12px">
+      <h2 class="sec">🔁 とことん復習</h2>
+      <div class="row">
+        <span style="font-size:52px;font-weight:800;font-family:'Hiragino Mincho ProN','Yu Mincho',serif;line-height:1" id="revKanji">木</span>
+        <div class="small" id="revStatus"></div>
+      </div>
+      <div class="quizQ" id="revQ" style="margin-top:10px"></div>
+      <div class="choices" id="revChoices"></div>
+      <div class="feedback" id="revFb"></div>
+      <div class="row" style="margin-top:14px" id="revActions"></div>
+    </div>
+  </section>
+
   <!-- 図鑑 -->
   <section class="view" id="view-zukan">
     <button class="btn" data-nav="home">← もどる</button>
@@ -266,7 +288,7 @@ const STAGES = [
 let storeOK = true;
 let S = loadState();
 function loadState() {
-  const def = { points: 0, marks: {}, readThemes: {}, quizBest: {}, furigana: true, streak: { last: "", count: 0 }, mission: { date: "", read: 0, quizOk: 0, write: 0, bonus: {} } };
+  const def = { points: 0, marks: {}, readThemes: {}, quizBest: {}, furigana: true, weak: {}, sound: true, streak: { last: "", count: 0 }, mission: { date: "", read: 0, quizOk: 0, write: 0, bonus: {} } };
   try {
     const raw = localStorage.getItem(LSKEY);
     if (!raw) return def;
@@ -302,12 +324,54 @@ function addPoints(n, why) {
   const before = stageIndex();
   saveState(); renderHome();
   const after = stageIndex();
-  if (after > before) toast("🎉 まるが 成長したよ！" + STAGES[after].name);
+  if (after > before) { playGrow(); toast("🎉 まるが 成長したよ！" + STAGES[after].name); }
   else if (why) toast(why + "（+" + n + " ポイント）");
 }
 function stageIndex() { let i = 0; STAGES.forEach((s, j) => { if (S.points >= s.at) i = j; }); return i; }
 let toastTimer = null;
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2600); }
+/* ===== 猫の音（Web Audioで合成） ===== */
+let audioCtx = null;
+function ac() {
+  if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } }
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
+function meow(f0, f1, dur, vol, delay) {
+  if (S.sound === false) return;
+  const ctx = ac(); if (!ctx) return;
+  const t = ctx.currentTime + (delay || 0);
+  const o = ctx.createOscillator(), o2 = ctx.createOscillator(), g = ctx.createGain();
+  o.type = "sine"; o2.type = "triangle";
+  o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(f1 * 1.3, t + dur * 0.35);
+  o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  o2.frequency.setValueAtTime(f0 * 2, t);
+  o2.frequency.exponentialRampToValueAtTime(f1 * 2.6, t + dur * 0.35);
+  o2.frequency.exponentialRampToValueAtTime(f1 * 2, t + dur);
+  const g2 = ctx.createGain(); g2.gain.value = 0.25;
+  const vib = ctx.createOscillator(), vg = ctx.createGain();
+  vib.frequency.value = 26; vg.gain.value = 7;
+  vib.connect(vg); vg.connect(o.frequency);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.18);
+  g.gain.setValueAtTime(vol, t + dur * 0.68);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); o2.connect(g2); g2.connect(g); g.connect(ctx.destination);
+  o.start(t); o2.start(t); vib.start(t);
+  o.stop(t + dur + 0.05); o2.stop(t + dur + 0.05); vib.stop(t + dur + 0.05);
+}
+function playCorrect() { meow(640, 900, 0.26, 0.20, 0); meow(780, 1150, 0.34, 0.22, 0.17); }
+function playWrong() { meow(430, 290, 0.42, 0.15, 0); }
+function playMid() { meow(520, 560, 0.3, 0.16, 0); }
+function playGrow() { meow(600, 850, 0.24, 0.2, 0); meow(720, 1000, 0.24, 0.2, 0.2); meow(860, 1250, 0.4, 0.24, 0.4); }
+$("soundBtn").addEventListener("click", () => {
+  S.sound = S.sound === false ? true : false;
+  saveState();
+  $("soundBtn").textContent = S.sound ? "🔊 音：ON" : "🔇 音：OFF";
+  if (S.sound) playCorrect();
+});
+$("soundBtn").textContent = S.sound === false ? "🔇 音：OFF" : "🔊 音：ON";
 function show(view) {
   document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
   $("view-" + view).classList.add("active");
@@ -346,6 +410,19 @@ function renderHome() {
     div.innerHTML = '<span class="box">' + (done ? "✓" : "") + '</span><span>' + it.label + '</span><span class="grow"></span><span class="small">' + Math.min(it.cur, it.goal) + " / " + it.goal + "</span>";
     $("missionList").appendChild(div);
   });
+  const weakKeys = Object.keys(S.weak || {});
+  if (weakKeys.length) {
+    $("weakCard").style.display = "";
+    const wg = $("weakGrid"); wg.innerHTML = "";
+    weakKeys.forEach(k => {
+      const w = S.weak[k];
+      const b = document.createElement("button");
+      b.className = "kcell";
+      b.innerHTML = '<div class="k">' + k + '</div><div class="st ' + (w.readOk && w.writeOk ? "good" : "mid") + '">読み' + (w.readOk ? "✓" : "…") + " 書き" + (w.writeOk ? "✓" : "…") + '</div><div class="small">まちがい ' + w.miss + "回</div>";
+      b.addEventListener("click", () => startReview(k));
+      wg.appendChild(b);
+    });
+  } else $("weakCard").style.display = "none";
   const g = $("themeGrid"); g.innerHTML = "";
   CONTENT.themes.forEach(th => {
     const doneCount = th.kanji.filter(k => S.marks[k] === "good").length;
@@ -389,7 +466,7 @@ function openTheme(id) {
     const b = document.createElement("button");
     b.className = "kcell";
     b.innerHTML = '<div class="k">' + k + '</div><div class="small">' + (info.kun || info.words[0][1]) + '</div><div class="st ' + (S.marks[k] || "none") + '">' + (S.marks[k] === "good" ? "◎ 書けた" : S.marks[k] === "mid" ? "△ あいまい" : S.marks[k] === "bad" ? "× 練習中" : "まだ") + "</div>";
-    b.addEventListener("click", () => startPractice(k));
+    b.addEventListener("click", () => { pracReturn = "theme"; startPractice(k); });
     g.appendChild(b);
   });
   show("theme");
@@ -432,7 +509,7 @@ $("readDoneBtn").addEventListener("click", () => {
 function checkMissionBonus(key, goal) {
   const m = missionToday();
   const cur = key === "read" ? m.read : key === "quiz" ? m.quizOk : m.write;
-  if (cur >= goal && !m.bonus[key]) { m.bonus[key] = true; S.points += 15; toast("🎯 ミッション達成！ +15 ポイント"); }
+  if (cur >= goal && !m.bonus[key]) { m.bonus[key] = true; S.points += 15; playGrow(); toast("🎯 ミッション達成！ +15 ポイント"); }
 }
 
 /* ===== ポップアップ ===== */
@@ -448,7 +525,7 @@ function openPopup(k) {
 }
 $("popClose").addEventListener("click", () => $("kanjiPopup").classList.remove("show"));
 $("kanjiPopup").addEventListener("click", e => { if (e.target === $("kanjiPopup")) $("kanjiPopup").classList.remove("show"); });
-$("popPractice").addEventListener("click", () => { $("kanjiPopup").classList.remove("show"); startPractice(popKanji); });
+$("popPractice").addEventListener("click", () => { $("kanjiPopup").classList.remove("show"); pracReturn = "theme"; startPractice(popKanji); });
 
 /* ===== クイズ ===== */
 let quizList = [], quizIdx = 0, quizScore = 0, quizAnswered = false;
@@ -462,7 +539,7 @@ function startQuiz() {
     const info = CONTENT.kanji[k];
     const w = info.words[0];
     const distract = shuffle(ks.filter(x => x !== k).map(x => CONTENT.kanji[x].words[0][1])).slice(0, 3);
-    quizList.push({ q: "「" + w[0] + "」の 読み方は？", choices: shuffle([w[1]].concat(distract)), answer: w[1], explain: w[0] + " は「" + w[1] + "」と 読みます。" });
+    quizList.push({ k: k, q: "「" + w[0] + "」の 読み方は？", choices: shuffle([w[1]].concat(distract)), answer: w[1], explain: w[0] + " は「" + w[1] + "」と 読みます。" });
   });
   curTheme.quiz.forEach(q => quizList.push({ q: q.q, choices: q.choices, answer: q.choices[q.answer], explain: q.explain }));
   quizList = shuffle(quizList);
@@ -494,12 +571,13 @@ function answerQuiz(btn, ch, q) {
   const fb = $("quizFb");
   fb.className = "feedback show";
   if (ok) {
+    playCorrect();
     quizScore++;
     const m = missionToday(); m.quizOk++;
     checkMissionBonus("quiz", 5);
     S.points += 5; touchStreak(); saveState(); renderHome();
     fb.textContent = "⭕ 正解！ " + q.explain;
-  } else fb.textContent = "❌ 残念。正解は「" + q.answer + "」。 " + q.explain;
+  } else { playWrong(); if (q.k) addWeak(q.k, "read"); fb.textContent = "❌ 残念。正解は「" + q.answer + "」。 " + q.explain + "（この漢字は 覚え直しリストに 入りました）"; }
   $("quizNext").style.display = "";
   $("quizNext").textContent = quizIdx + 1 >= quizList.length ? "結果を 見る →" : "次へ →";
 }
@@ -519,11 +597,91 @@ $("quizNext").addEventListener("click", () => {
   } else showQuizQ();
 });
 
+/* ===== 覚え直し（誤答漢字の とことん復習） ===== */
+function addWeak(k, kind) {
+  if (!S.weak[k]) S.weak[k] = { miss: 0, readOk: false, writeOk: false };
+  S.weak[k].miss++;
+  if (kind === "read") S.weak[k].readOk = false;
+  if (kind === "write") S.weak[k].writeOk = false;
+  saveState();
+}
+function maybeClearWeak(k) {
+  const w = S.weak[k];
+  if (w && w.readOk && w.writeOk) {
+    delete S.weak[k];
+    S.points += 20; touchStreak(); saveState(); renderHome();
+    playGrow();
+    toast("🎉 「" + k + "」を 克服した！ +20 ポイント");
+    return true;
+  }
+  return false;
+}
+let reviewK = null;
+function startReview(k) {
+  reviewK = k;
+  show("review");
+  renderReview();
+}
+function renderReview() {
+  const w = S.weak[reviewK];
+  if (!w) { renderHome(); show("home"); return; }
+  const info = CONTENT.kanji[reviewK];
+  $("revKanji").textContent = reviewK;
+  $("revStatus").innerHTML = "読みクイズ：" + (w.readOk ? "✅ クリア" : "まだ") + " ／ 書き練習：" + (w.writeOk ? "✅ クリア" : "まだ") + "<br>まちがえた 回数：" + w.miss + "回";
+  $("revFb").className = "feedback"; $("revFb").textContent = "";
+  $("revActions").innerHTML = "";
+  if (w.readOk) {
+    $("revQ").textContent = "読みは クリア済み！ 次は 書き練習で ◎を 目指そう。";
+    $("revChoices").innerHTML = "";
+    const b = document.createElement("button");
+    b.className = "btn main big"; b.textContent = "✍ 書く練習へ 進む";
+    b.addEventListener("click", () => { pracReturn = "review"; startPractice(reviewK); });
+    $("revActions").appendChild(b);
+    return;
+  }
+  const word = info.words[0];
+  const pool = shuffle(Object.keys(CONTENT.kanji).filter(x => x !== reviewK).map(x => CONTENT.kanji[x].words[0][1])).slice(0, 3);
+  const choices = shuffle([word[1]].concat(pool));
+  $("revQ").textContent = "「" + word[0] + "」の 読み方は？";
+  const c = $("revChoices"); c.innerHTML = "";
+  choices.forEach(ch => {
+    const b = document.createElement("button");
+    b.className = "choice"; b.textContent = ch;
+    b.addEventListener("click", () => {
+      const fb = $("revFb");
+      fb.className = "feedback show";
+      if (ch === word[1]) {
+        playCorrect();
+        S.weak[reviewK].readOk = true; saveState();
+        document.querySelectorAll("#revChoices .choice").forEach(x => { x.disabled = true; if (x.textContent === word[1]) x.classList.add("correct"); });
+        fb.textContent = "⭕ 正解！ 読みは クリア。次は 書き練習で ◎を 取ろう。";
+        const nb = document.createElement("button");
+        nb.className = "btn main big"; nb.textContent = "✍ 書く練習へ 進む";
+        nb.addEventListener("click", () => { pracReturn = "review"; startPractice(reviewK); });
+        $("revActions").innerHTML = ""; $("revActions").appendChild(nb);
+        maybeClearWeak(reviewK);
+      } else {
+        playWrong();
+        addWeak(reviewK, "read");
+        b.classList.add("wrong"); b.disabled = true;
+        fb.textContent = "❌ もう一度！ 正解は「" + word[1] + "」だよ。";
+        renderReviewStatusOnly();
+      }
+    });
+    c.appendChild(b);
+  });
+}
+function renderReviewStatusOnly() {
+  const w = S.weak[reviewK];
+  if (w) $("revStatus").innerHTML = "読みクイズ：" + (w.readOk ? "✅ クリア" : "まだ") + " ／ 書き練習：" + (w.writeOk ? "✅ クリア" : "まだ") + "<br>まちがえた 回数：" + w.miss + "回";
+}
+
 /* ===== 書き練習 ===== */
 const wrap = $("canvasWrap"), bg = $("bgCanvas"), ink = $("inkCanvas");
 const bctx = bg.getContext("2d"), ictx = ink.getContext("2d");
 let CW = 0, CHh = 0, DPR = 1;
 let pKanji = null, phase = "anim", strokes = [], curStroke = null, lastPt = null, lastT = 0;
+let pracReturn = "theme";
 let targetPts = [], covered = null, animTimer = null;
 function setupCanvas() {
   const r = wrap.getBoundingClientRect();
@@ -767,13 +925,23 @@ $("phaseBtn").addEventListener("click", () => {
 document.querySelectorAll("#markBtns button").forEach(b => b.addEventListener("click", () => {
   const mk = b.dataset.mark;
   S.marks[pKanji] = mk;
+  if (mk === "good") playCorrect(); else if (mk === "mid") { playMid(); addWeak(pKanji, "write"); } else { playWrong(); addWeak(pKanji, "write"); }
+  if (mk === "good" && S.weak[pKanji]) { S.weak[pKanji].writeOk = true; saveState(); }
   const m = missionToday(); m.write++;
   checkMissionBonus("write", 3);
   addPoints(mk === "good" ? 10 : mk === "mid" ? 6 : 3, mk === "good" ? "◎ よく書けた！" : mk === "mid" ? "△ もう少し！" : "× 次は きっと書ける");
+  const cleared = mk === "good" ? maybeClearWeak(pKanji) : false;
   saveState(); renderHome();
-  openTheme(curTheme.id);
+  if (pracReturn === "review") {
+    if (cleared || !S.weak[pKanji]) { renderHome(); show("home"); }
+    else startReview(pKanji);
+  } else openTheme(curTheme.id);
 }));
-$("pracBack").addEventListener("click", () => openTheme(curTheme.id));
+$("pracBack").addEventListener("click", () => {
+  if (pracReturn === "review" && reviewK && S.weak[reviewK]) startReview(reviewK);
+  else if (pracReturn === "review") { renderHome(); show("home"); }
+  else openTheme(curTheme.id);
+});
 window.addEventListener("resize", () => {
   if (!$("view-practice").classList.contains("active")) return;
   const keep = strokes;
